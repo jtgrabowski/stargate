@@ -22,6 +22,7 @@ import static graphql.schema.FieldCoordinates.coordinates;
 import static graphql.schema.GraphQLArgument.newArgument;
 import static graphql.schema.GraphQLCodeRegistry.newCodeRegistry;
 import static graphql.schema.GraphQLEnumType.newEnum;
+import static graphql.schema.GraphQLEnumValueDefinition.newEnumValueDefinition;
 import static graphql.schema.GraphQLFieldDefinition.newFieldDefinition;
 import static graphql.schema.GraphQLInputObjectField.newInputObjectField;
 import static graphql.schema.GraphQLInputObjectType.newInputObject;
@@ -51,6 +52,7 @@ import io.stargate.graphql.schema.schemafirst.fetchers.admin.DeploySchemaFileFet
 import io.stargate.graphql.schema.schemafirst.fetchers.admin.DropNamespaceFetcher;
 import io.stargate.graphql.schema.schemafirst.fetchers.admin.SchemaFetcher;
 import io.stargate.graphql.schema.schemafirst.fetchers.admin.SingleNamespaceFetcher;
+import io.stargate.graphql.schema.schemafirst.migration.MigrationStrategy;
 import io.stargate.graphql.web.resources.GraphqlResourceBase;
 import java.io.InputStream;
 
@@ -355,6 +357,60 @@ public class AdminSchemaBuilder {
           .type(nonNull(DROP_NAMESPACE_TYPE))
           .build();
 
+  public static final GraphQLEnumType MIGRATION_STRATEGY_ENUM =
+      newEnum()
+          .name("MigrationStrategy")
+          .description(
+              "What to do if the CQL schema doesn't match the provided GraphQL schema. "
+                  + "Note that a table will be considered matching even if it contains additional "
+                  + "columns not present in the GraphQL schema. In other words, a deploy "
+                  + "operation will never drop columns.")
+          .value(
+              newEnumValueDefinition()
+                  .name(MigrationStrategy.USE_EXISTING.name())
+                  .value(MigrationStrategy.USE_EXISTING)
+                  .description(
+                      "Don't do anything. All CQL tables and UDTs must match, otherwise the "
+                          + "deployment is aborted. This is the most conservative strategy.")
+                  .build())
+          .value(
+              newEnumValueDefinition()
+                  .name(MigrationStrategy.ADD_MISSING_TABLES.name())
+                  .value(MigrationStrategy.ADD_MISSING_TABLES)
+                  .description(
+                      "Create CQL tables and UDTs that don't already exist. "
+                          + "Those that exist must match, otherwise the deployment is aborted.")
+                  .build())
+          .value(
+              newEnumValueDefinition()
+                  .name(MigrationStrategy.ADD_MISSING_TABLES_AND_COLUMNS.name())
+                  .value(MigrationStrategy.ADD_MISSING_TABLES_AND_COLUMNS)
+                  .description(
+                      "Create CQL tables and UDTs that don't already exist. "
+                          + "For those that exist, add any missing columns (as long as they're "
+                          + "not marked as partition key or clustering). Note that this could "
+                          + "still fail if the column existed before with a different type.")
+                  .build())
+          .value(
+              newEnumValueDefinition()
+                  .name(MigrationStrategy.DROP_AND_RECREATE_ALL.name())
+                  .value(MigrationStrategy.DROP_AND_RECREATE_ALL)
+                  .description(
+                      "Drop and recreate all CQL tables and UDTs. "
+                          + "This is a destructive operation: any existing data will be lost.")
+                  .build())
+          .value(
+              newEnumValueDefinition()
+                  .name(MigrationStrategy.DROP_AND_RECREATE_IF_MISMATCH.name())
+                  .value(MigrationStrategy.DROP_AND_RECREATE_IF_MISMATCH)
+                  .description(
+                      "Drop and recreate only the CQL tables and UDTs that don't match. "
+                          + "This is a destructive operation: any existing data in those tables "
+                          + "will be lost (however, tables that didn't change will keep their "
+                          + "data).")
+                  .build())
+          .build();
+
   private static final GraphQLEnumType MESSAGE_CATEGORY_ENUM =
       newEnum()
           .name("MessageCategory")
@@ -388,7 +444,7 @@ public class AdminSchemaBuilder {
               newFieldDefinition()
                   .name("version")
                   .description("The new schema version that was created by this operation.")
-                  .type(nonNull(GraphQLString))
+                  .type(GraphQLString)
                   .build())
           .field(
               newFieldDefinition()
@@ -399,6 +455,14 @@ public class AdminSchemaBuilder {
                   // TODO add an argument to filter by category
                   // currently blocked by https://github.com/graphql-java/graphql-java/pull/2126
                   .type(list(MESSAGE_TYPE))
+                  .build())
+          .field(
+              newFieldDefinition()
+                  .name("cqlChanges")
+                  .description(
+                      "The queries that were executed to adapt the CQL data model to the new "
+                          + "schema.")
+                  .type(list(GraphQLString))
                   .build())
           .field(QUERY_FIELD)
           .build();
@@ -419,6 +483,24 @@ public class AdminSchemaBuilder {
                         + "or null if this is the first deployment.\n"
                         + "This is used to prevent concurrent updates.")
                 .type(GraphQLString)
+                .build())
+        .argument(
+            newArgument()
+                .name("migrationStrategy")
+                .description("The strategy to update the CQL schema if necessary.")
+                .type(nonNull(MIGRATION_STRATEGY_ENUM))
+                .defaultValue(MigrationStrategy.ADD_MISSING_TABLES_AND_COLUMNS)
+                .build())
+        .argument(
+            newArgument()
+                .name("dryRun")
+                .description(
+                    "Just parse and validate the schema, don't deploy it or apply any changes to "
+                        + "the database. This is useful in particular in conjunction with the "
+                        + "`cqlChanges` field in the result, to evaluate the impacts on the CQL "
+                        + "data model.")
+                .type(nonNull(GraphQLBoolean))
+                .defaultValue(false)
                 .build())
         .type(DEPLOY_SCHEMA_TYPE);
   }
