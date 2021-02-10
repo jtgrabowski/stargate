@@ -140,7 +140,9 @@ public class CassandraMigrator {
           case USE_EXISTING:
           case ADD_MISSING_TABLES:
             errors.addAll(
-                differences.stream().map(Difference::toString).collect(Collectors.toList()));
+                differences.stream()
+                    .map(Difference::toGraphqlMessage)
+                    .collect(Collectors.toList()));
             break;
           case ADD_MISSING_TABLES_AND_COLUMNS:
             List<Difference> blockers =
@@ -152,7 +154,7 @@ public class CassandraMigrator {
               }
             } else {
               errors.addAll(
-                  blockers.stream().map(Difference::toString).collect(Collectors.toList()));
+                  blockers.stream().map(Difference::toGraphqlMessage).collect(Collectors.toList()));
             }
             break;
           case DROP_AND_RECREATE_IF_MISMATCH:

@@ -200,9 +200,7 @@ public class CassandraSchemaHelper {
       return type;
     }
 
-    @Override
-    public String toString() {
-
+    public String toGraphqlMessage() {
       return String.format(
           "[%s] %s.%s%s",
           type, column.table(), column.name(), description == null ? "" : ": " + description);
