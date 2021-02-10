@@ -15,7 +15,6 @@
  */
 package io.stargate.graphql.schema.schemafirst.migration;
 
-import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import graphql.GraphqlErrorException;
 import io.stargate.db.datastore.DataStore;
@@ -28,9 +27,6 @@ import io.stargate.graphql.schema.schemafirst.processor.EntityMappingModel;
 import io.stargate.graphql.schema.schemafirst.processor.MappingModel;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeSet;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -52,7 +48,7 @@ public class CassandraMigrator {
 
     Schema schema = dataStore.schema();
 
-    SortedSet<MigrationQuery> queries = new TreeSet<>();
+    List<MigrationQuery> queries = new ArrayList<>();
     List<String> errors = new ArrayList<>();
 
     for (EntityMappingModel entity : mappingModel.getEntities().values()) {
@@ -101,7 +97,7 @@ public class CassandraMigrator {
           .extensions(ImmutableMap.of("migrationErrors", errors))
           .build();
     }
-    return ImmutableList.copyOf(queries);
+    return queries;
   }
 
   private <T extends SchemaEntity> void compute(
@@ -112,58 +108,79 @@ public class CassandraMigrator {
       BiFunction<T, DataStore, MigrationQuery> dropBuilder,
       CassandraSchemaHelper.AddColumnBuilder<T> addColumnBuilder,
       String entityType,
-      Set<MigrationQuery> queries,
+      List<MigrationQuery> queries,
       List<String> errors) {
-    if (strategy == MigrationStrategy.DROP_AND_RECREATE_ALL) {
-      // We don't need to compare the schema, just override everything.
-      queries.add(dropBuilder.apply(expected, dataStore));
-      queries.add(createBuilder.apply(expected, dataStore));
-    } else if (actual == null) {
-      // The table/UDT does not exist
-      switch (strategy) {
-        case USE_EXISTING:
+
+    switch (strategy) {
+      case USE_EXISTING:
+        if (actual == null) {
           errors.add(String.format("Missing %s %s", entityType, expected.name()));
-          break;
-        case ADD_MISSING_TABLES:
-        case ADD_MISSING_TABLES_AND_COLUMNS:
-        case DROP_AND_RECREATE_IF_MISMATCH:
+        } else {
+          failIfMismatch(expected, actual, comparator, errors);
+        }
+        break;
+      case ADD_MISSING_TABLES:
+        if (actual == null) {
           queries.add(createBuilder.apply(expected, dataStore));
-          break;
-        default:
-          throw new AssertionError("Unexpected strategy " + strategy);
-      }
-    } else {
-      // The table/UDT exists, compare with our model
-      List<Difference> differences = comparator.apply(expected, actual);
-      if (!differences.isEmpty()) {
-        switch (strategy) {
-          case USE_EXISTING:
-          case ADD_MISSING_TABLES:
-            errors.addAll(
-                differences.stream()
-                    .map(Difference::toGraphqlMessage)
-                    .collect(Collectors.toList()));
-            break;
-          case ADD_MISSING_TABLES_AND_COLUMNS:
-            List<Difference> blockers =
-                differences.stream().filter(d -> !isAddableColumn(d)).collect(Collectors.toList());
-            if (blockers.isEmpty()) {
-              for (Difference difference : differences) {
-                assert isAddableColumn(difference);
-                queries.add(addColumnBuilder.build(expected, difference.getColumn(), dataStore));
-              }
-            } else {
-              errors.addAll(
-                  blockers.stream().map(Difference::toGraphqlMessage).collect(Collectors.toList()));
-            }
-            break;
-          case DROP_AND_RECREATE_IF_MISMATCH:
+        } else {
+          failIfMismatch(expected, actual, comparator, errors);
+        }
+        break;
+      case ADD_MISSING_TABLES_AND_COLUMNS:
+        if (actual == null) {
+          queries.add(createBuilder.apply(expected, dataStore));
+        } else {
+          addMissingColumns(expected, actual, comparator, addColumnBuilder, queries, errors);
+        }
+        break;
+      case DROP_AND_RECREATE_ALL:
+        queries.add(dropBuilder.apply(expected, dataStore));
+        queries.add(createBuilder.apply(expected, dataStore));
+        break;
+      case DROP_AND_RECREATE_IF_MISMATCH:
+        if (actual == null) {
+          queries.add(createBuilder.apply(expected, dataStore));
+        } else {
+          List<Difference> differences = comparator.apply(expected, actual);
+          if (!differences.isEmpty()) {
             queries.add(dropBuilder.apply(expected, dataStore));
             queries.add(createBuilder.apply(expected, dataStore));
-            break;
-          default:
-            throw new AssertionError("Unexpected strategy " + strategy);
+          }
         }
+        break;
+      default:
+        throw new AssertionError("Unexpected strategy " + strategy);
+    }
+  }
+
+  private <T extends SchemaEntity> void failIfMismatch(
+      T expected, T actual, BiFunction<T, T, List<Difference>> comparator, List<String> errors) {
+    List<Difference> differences = comparator.apply(expected, actual);
+    if (!differences.isEmpty()) {
+      errors.addAll(
+          differences.stream().map(Difference::toGraphqlMessage).collect(Collectors.toList()));
+    }
+  }
+
+  private <T extends SchemaEntity> void addMissingColumns(
+      T expected,
+      T actual,
+      BiFunction<T, T, List<Difference>> comparator,
+      CassandraSchemaHelper.AddColumnBuilder<T> addColumnBuilder,
+      List<MigrationQuery> queries,
+      List<String> errors) {
+    List<Difference> differences = comparator.apply(expected, actual);
+    if (!differences.isEmpty()) {
+      List<Difference> blockers =
+          differences.stream().filter(d -> !isAddableColumn(d)).collect(Collectors.toList());
+      if (blockers.isEmpty()) {
+        for (Difference difference : differences) {
+          assert isAddableColumn(difference);
+          queries.add(addColumnBuilder.build(expected, difference.getColumn(), dataStore));
+        }
+      } else {
+        errors.addAll(
+            blockers.stream().map(Difference::toGraphqlMessage).collect(Collectors.toList()));
       }
     }
   }

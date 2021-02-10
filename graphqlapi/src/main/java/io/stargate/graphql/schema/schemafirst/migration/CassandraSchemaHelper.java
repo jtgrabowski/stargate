@@ -94,8 +94,7 @@ public class CassandraSchemaHelper {
             .column(table.columns())
             .build()
             .bind(),
-        "Create table " + table.name(),
-        false);
+        "Create table " + table.name());
   }
 
   public static MigrationQuery buildDropQuery(Table table, DataStore dataStore) {
@@ -107,8 +106,7 @@ public class CassandraSchemaHelper {
             .ifExists()
             .build()
             .bind(),
-        "Drop table " + table.name(),
-        false);
+        "Drop table " + table.name());
   }
 
   public static MigrationQuery buildAddColumnQuery(
@@ -121,8 +119,7 @@ public class CassandraSchemaHelper {
             .addColumn(column)
             .build()
             .bind(),
-        String.format("Add table column %s.%s", table.name(), column.name()),
-        true);
+        String.format("Add table column %s.%s", table.name(), column.name()));
   }
 
   /** @return a list of differences, or empty if the UDTs match. */
@@ -148,15 +145,13 @@ public class CassandraSchemaHelper {
   public static MigrationQuery buildCreateQuery(UserDefinedType type, DataStore dataStore) {
     return new MigrationQuery(
         dataStore.queryBuilder().create().type(type.keyspace(), type).build().bind(),
-        "Create UDT " + type.name(),
-        false);
+        "Create UDT " + type.name());
   }
 
   public static MigrationQuery buildDropQuery(UserDefinedType type, DataStore dataStore) {
     return new MigrationQuery(
         dataStore.queryBuilder().drop().type(type.keyspace(), type).ifExists().build().bind(),
-        "Drop UDT " + type.name(),
-        false);
+        "Drop UDT " + type.name());
   }
 
   public static MigrationQuery buildAddColumnQuery(
@@ -169,8 +164,7 @@ public class CassandraSchemaHelper {
             .addColumn(column)
             .build()
             .bind(),
-        String.format("Add UDT field %s.%s", type.name(), column.name()),
-        true);
+        String.format("Add UDT field %s.%s", type.name(), column.name()));
   }
 
   public enum DifferenceType {

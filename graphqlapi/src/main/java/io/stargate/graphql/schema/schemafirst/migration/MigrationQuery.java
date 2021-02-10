@@ -18,17 +18,14 @@ package io.stargate.graphql.schema.schemafirst.migration;
 import io.stargate.db.query.builder.AbstractBound;
 
 /** A DDL query to be executed as part of a migration. */
-public class MigrationQuery implements Comparable<MigrationQuery> {
+public class MigrationQuery {
 
   private final AbstractBound<?> query;
   private final String description;
-  private final boolean isAddColumn;
 
-  /** @param isAddColumn whether the query is an {@code ALTER TABLE/TYPE... ADD COLUMN} */
-  public MigrationQuery(AbstractBound<?> query, String description, boolean isAddColumn) {
+  public MigrationQuery(AbstractBound<?> query, String description) {
     this.query = query;
     this.description = description;
-    this.isAddColumn = isAddColumn;
   }
 
   public AbstractBound<?> getQuery() {
@@ -37,20 +34,5 @@ public class MigrationQuery implements Comparable<MigrationQuery> {
 
   public String getDescription() {
     return description;
-  }
-
-  @Override
-  public int compareTo(MigrationQuery that) {
-    // `ALTER... ADD COLUMN` queries can fail if the column previously existed with a different
-    // type, and we have no way to detect that on an existing schema.
-    // So we want to execute them all first, so that if something goes wrong we'll have made as few
-    // changes to the schema as possible.
-    if (this.isAddColumn && !that.isAddColumn) {
-      return -1;
-    } else if (!this.isAddColumn && that.isAddColumn) {
-      return 1;
-    } else {
-      return 0;
-    }
   }
 }
