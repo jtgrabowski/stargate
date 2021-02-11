@@ -15,7 +15,6 @@
  */
 package io.stargate.graphql.schema.schemafirst.migration;
 
-import io.stargate.db.datastore.DataStore;
 import io.stargate.db.schema.Column;
 import io.stargate.db.schema.Table;
 import io.stargate.db.schema.UserDefinedType;
@@ -85,43 +84,6 @@ public class CassandraSchemaHelper {
     }
   }
 
-  public static MigrationQuery buildCreateQuery(Table table, DataStore dataStore) {
-    return new MigrationQuery(
-        dataStore
-            .queryBuilder()
-            .create()
-            .table(table.keyspace(), table.name())
-            .column(table.columns())
-            .build()
-            .bind(),
-        "Create table " + table.name());
-  }
-
-  public static MigrationQuery buildDropQuery(Table table, DataStore dataStore) {
-    return new MigrationQuery(
-        dataStore
-            .queryBuilder()
-            .drop()
-            .table(table.keyspace(), table.name())
-            .ifExists()
-            .build()
-            .bind(),
-        "Drop table " + table.name());
-  }
-
-  public static MigrationQuery buildAddColumnQuery(
-      Table table, Column column, DataStore dataStore) {
-    return new MigrationQuery(
-        dataStore
-            .queryBuilder()
-            .alter()
-            .table(table.keyspace(), table.name())
-            .addColumn(column)
-            .build()
-            .bind(),
-        String.format("Add table column %s.%s", table.name(), column.name()));
-  }
-
   /** @return a list of differences, or empty if the UDTs match. */
   public static List<Difference> compare(UserDefinedType expectedType, UserDefinedType actualType) {
 
@@ -140,31 +102,6 @@ public class CassandraSchemaHelper {
       compareColumn(expectedColumn, actualColumn, differences);
     }
     return differences;
-  }
-
-  public static MigrationQuery buildCreateQuery(UserDefinedType type, DataStore dataStore) {
-    return new MigrationQuery(
-        dataStore.queryBuilder().create().type(type.keyspace(), type).build().bind(),
-        "Create UDT " + type.name());
-  }
-
-  public static MigrationQuery buildDropQuery(UserDefinedType type, DataStore dataStore) {
-    return new MigrationQuery(
-        dataStore.queryBuilder().drop().type(type.keyspace(), type).ifExists().build().bind(),
-        "Drop UDT " + type.name());
-  }
-
-  public static MigrationQuery buildAddColumnQuery(
-      UserDefinedType type, Column column, DataStore dataStore) {
-    return new MigrationQuery(
-        dataStore
-            .queryBuilder()
-            .alter()
-            .type(type.keyspace(), type)
-            .addColumn(column)
-            .build()
-            .bind(),
-        String.format("Add UDT field %s.%s", type.name(), column.name()));
   }
 
   public enum DifferenceType {
@@ -199,15 +136,6 @@ public class CassandraSchemaHelper {
           "[%s] %s.%s%s",
           type, column.table(), column.name(), description == null ? "" : ": " + description);
     }
-  }
-
-  /**
-   * Functional interface to capture the signatures of {@link #buildAddColumnQuery(Table, Column,
-   * DataStore)} and {@link #buildAddColumnQuery(UserDefinedType, Column, DataStore)}.
-   */
-  @FunctionalInterface
-  public interface AddColumnBuilder<T> {
-    MigrationQuery build(T type, Column column, DataStore dataStore);
   }
 
   private CassandraSchemaHelper() {}

@@ -15,9 +15,11 @@
  */
 package io.stargate.graphql.schema.schemafirst.migration;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import graphql.GraphqlErrorException;
 import io.stargate.db.datastore.DataStore;
+import io.stargate.db.schema.Column;
 import io.stargate.db.schema.Schema;
 import io.stargate.db.schema.SchemaEntity;
 import io.stargate.db.schema.Table;
@@ -25,9 +27,11 @@ import io.stargate.db.schema.UserDefinedType;
 import io.stargate.graphql.schema.schemafirst.migration.CassandraSchemaHelper.Difference;
 import io.stargate.graphql.schema.schemafirst.processor.EntityMappingModel;
 import io.stargate.graphql.schema.schemafirst.processor.MappingModel;
+import io.stargate.graphql.schema.schemafirst.util.DirectedGraph;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class CassandraMigrator {
@@ -60,9 +64,9 @@ public class CassandraMigrator {
               expectedTable,
               actualTable,
               CassandraSchemaHelper::compare,
-              CassandraSchemaHelper::buildCreateQuery,
-              CassandraSchemaHelper::buildDropQuery,
-              CassandraSchemaHelper::buildAddColumnQuery,
+              CreateTableQuery::new,
+              DropTableQuery::new,
+              AddTableColumnQuery::new,
               "table",
               queries,
               errors);
@@ -75,9 +79,9 @@ public class CassandraMigrator {
               expectedType,
               actualType,
               CassandraSchemaHelper::compare,
-              CassandraSchemaHelper::buildCreateQuery,
-              CassandraSchemaHelper::buildDropQuery,
-              CassandraSchemaHelper::buildAddColumnQuery,
+              CreateUdtQuery::new,
+              DropUdtQuery::new,
+              AddUdtFieldQuery::new,
               "UDT",
               queries,
               errors);
@@ -97,16 +101,16 @@ public class CassandraMigrator {
           .extensions(ImmutableMap.of("migrationErrors", errors))
           .build();
     }
-    return queries;
+    return sortForExecution(queries);
   }
 
   private <T extends SchemaEntity> void compute(
       T expected,
       T actual,
       BiFunction<T, T, List<Difference>> comparator,
-      BiFunction<T, DataStore, MigrationQuery> createBuilder,
-      BiFunction<T, DataStore, MigrationQuery> dropBuilder,
-      CassandraSchemaHelper.AddColumnBuilder<T> addColumnBuilder,
+      Function<T, MigrationQuery> createBuilder,
+      Function<T, MigrationQuery> dropBuilder,
+      BiFunction<T, Column, MigrationQuery> addColumnBuilder,
       String entityType,
       List<MigrationQuery> queries,
       List<String> errors) {
@@ -121,30 +125,30 @@ public class CassandraMigrator {
         break;
       case ADD_MISSING_TABLES:
         if (actual == null) {
-          queries.add(createBuilder.apply(expected, dataStore));
+          queries.add(createBuilder.apply(expected));
         } else {
           failIfMismatch(expected, actual, comparator, errors);
         }
         break;
       case ADD_MISSING_TABLES_AND_COLUMNS:
         if (actual == null) {
-          queries.add(createBuilder.apply(expected, dataStore));
+          queries.add(createBuilder.apply(expected));
         } else {
           addMissingColumns(expected, actual, comparator, addColumnBuilder, queries, errors);
         }
         break;
       case DROP_AND_RECREATE_ALL:
-        queries.add(dropBuilder.apply(expected, dataStore));
-        queries.add(createBuilder.apply(expected, dataStore));
+        queries.add(dropBuilder.apply(expected));
+        queries.add(createBuilder.apply(expected));
         break;
       case DROP_AND_RECREATE_IF_MISMATCH:
         if (actual == null) {
-          queries.add(createBuilder.apply(expected, dataStore));
+          queries.add(createBuilder.apply(expected));
         } else {
           List<Difference> differences = comparator.apply(expected, actual);
           if (!differences.isEmpty()) {
-            queries.add(dropBuilder.apply(expected, dataStore));
-            queries.add(createBuilder.apply(expected, dataStore));
+            queries.add(dropBuilder.apply(expected));
+            queries.add(createBuilder.apply(expected));
           }
         }
         break;
@@ -166,7 +170,7 @@ public class CassandraMigrator {
       T expected,
       T actual,
       BiFunction<T, T, List<Difference>> comparator,
-      CassandraSchemaHelper.AddColumnBuilder<T> addColumnBuilder,
+      BiFunction<T, Column, MigrationQuery> addColumnBuilder,
       List<MigrationQuery> queries,
       List<String> errors) {
     List<Difference> differences = comparator.apply(expected, actual);
@@ -176,7 +180,7 @@ public class CassandraMigrator {
       if (blockers.isEmpty()) {
         for (Difference difference : differences) {
           assert isAddableColumn(difference);
-          queries.add(addColumnBuilder.build(expected, difference.getColumn(), dataStore));
+          queries.add(addColumnBuilder.apply(expected, difference.getColumn()));
         }
       } else {
         errors.addAll(
@@ -189,5 +193,21 @@ public class CassandraMigrator {
     return difference.getType() == CassandraSchemaHelper.DifferenceType.MISSING_COLUMN
         && !difference.getColumn().isPartitionKey()
         && !difference.getColumn().isClusteringKey();
+  }
+
+  @VisibleForTesting
+  static List<MigrationQuery> sortForExecution(List<MigrationQuery> queries) {
+    if (queries.size() < 2) {
+      return queries;
+    }
+    DirectedGraph<MigrationQuery> graph = new DirectedGraph<>(queries);
+    for (MigrationQuery query1 : queries) {
+      for (MigrationQuery query2 : queries) {
+        if (query1 != query2 && query1.mustRunBefore(query2)) {
+          graph.addEdge(query1, query2);
+        }
+      }
+    }
+    return graph.topologicalSort();
   }
 }

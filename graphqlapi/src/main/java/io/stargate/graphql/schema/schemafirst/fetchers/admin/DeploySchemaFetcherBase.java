@@ -106,7 +106,9 @@ abstract class DeploySchemaFetcherBase extends CassandraFetcher<Map<String, Obje
             : queries.stream().map(MigrationQuery::getDescription).collect(Collectors.toList()));
 
     if (!dryRun) {
-      queries.forEach(q -> dataStore.execute(q.getQuery()));
+      for (MigrationQuery query : queries) {
+        dataStore.execute(query.build(dataStore)).get();
+      }
       SchemaSource newSource =
           new SchemaSourceDao(dataStore).insert(namespace, expectedVersion, input);
       response.put("version", newSource.getVersion());
